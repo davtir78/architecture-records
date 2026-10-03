@@ -33,3 +33,7 @@ Copy the template file, replace every `{…}` slot with your own content, and ke
 ## Where this comes from
 
 These files are published from the source of the IT Architecture Patterns site, so changes are made there and copied here. To suggest one, open an issue on this repository.
+
+## Licence
+
+The templates, schemas and worked examples are licensed under [Creative Commons Attribution 4.0 International](LICENSE) (CC BY 4.0): you may copy, adapt and use them, including commercially, if you give credit to IT Architecture Patterns and say what you changed. The decision record template also carries MADR's own licence (MIT or CC0-1.0), as credited above.
