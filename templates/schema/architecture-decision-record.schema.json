@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Architecture Decision Record (MADR) front matter",
+  "description": "MADR's metadata is optional; what is present must be well formed.",
+  "type": "object",
+  "properties": {
+    "template": { "const": "architecture-decision-record" },
+    "status": { "type": "string", "minLength": 1, "description": "proposed, rejected, accepted, deprecated, or 'superseded by ADR-…'" },
+    "date": { "type": "string", "format": "date" },
+    "decision-makers": { "type": ["string", "array"], "items": { "type": "string" } },
+    "consulted": { "type": ["string", "array"], "items": { "type": "string" } },
+    "informed": { "type": ["string", "array"], "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

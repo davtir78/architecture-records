@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Solution Architecture Design (SAD) front matter",
+  "type": "object",
+  "required": ["system", "lead-architect", "version", "status"],
+  "properties": {
+    "template": { "const": "solution-architecture-design" },
+    "system": { "type": "string", "minLength": 1 },
+    "project": { "type": "string", "minLength": 1 },
+    "lead-architect": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["draft", "under review", "approved"] },
+    "last-updated": { "type": "string", "format": "date" }
+  },
+  "additionalProperties": false
+}
