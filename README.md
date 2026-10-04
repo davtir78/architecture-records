@@ -23,11 +23,15 @@ Each template has a JSON Schema for its front matter in [templates/schema/](temp
 
 ## Using a template
 
-Copy the template file, replace every `{…}` slot with your own content, and keep the numbered headings in order. A section that does not apply says "Not applicable" and why. The rules are in each template's comments.
+Copy the template file and replace every `{…}` slot with your own content. Each template has its own rule for sections you do not need:
+
+- **Architecture decision record:** remove an optional element you do not use, as its comments say.
+- **Solution architecture design:** keep the numbered headings in order, and write "Not applicable" and why under one that does not apply.
+- **Reference architecture:** keep the headings, and fill each one.
 
 ## Credits
 
-- The decision record template is based on [MADR](https://adr.github.io/madr/) 4.0.0, used under its dual licence, MIT or CC0-1.0. The evaluation, principle-alignment and governance sections are additions.
+- The decision record template is based on [MADR](https://adr.github.io/madr/) 4.0.0, which is licensed MIT or CC0-1.0, and is used here under its CC0-1.0 option. The evaluation, principle-alignment and governance sections are additions.
 - The SAD template is shaped by the structure of [arc42](https://arc42.org) (Gernot Starke and Peter Hruschka, CC BY-SA 4.0) and the stakeholder-and-concern model of ISO/IEC/IEEE 42010. No text is copied from either.
 
 ## Where this comes from
@@ -36,4 +40,4 @@ These files are published from the source of the IT Architecture Patterns site, 
 
 ## Licence
 
-The templates, schemas and worked examples are licensed under [Creative Commons Attribution 4.0 International](LICENSE) (CC BY 4.0): you may copy, adapt and use them, including commercially, if you give credit to IT Architecture Patterns and say what you changed. The decision record template also carries MADR's own licence (MIT or CC0-1.0), as credited above.
+The templates, schemas and worked examples are licensed under [Creative Commons Attribution 4.0 International](LICENSE) (CC BY 4.0): you may copy, adapt and use them, including commercially, if you give credit to IT Architecture Patterns and say what you changed. The decision record template is also used under MADR's CC0-1.0 option, as credited above.
