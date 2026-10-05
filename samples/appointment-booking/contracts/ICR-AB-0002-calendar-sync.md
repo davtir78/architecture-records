@@ -1,10 +1,10 @@
 ---
-icr: "0.1"
+icr: "0.2"
 id: ICR-AB-0002
 title: Calendar synchronisation
 status: proposed
-version: 0.10.0
-date: 2026-10-03
+version: 0.11.0
+date: 2026-10-04
 pattern:
   id: int-native-cloud
   url: https://www.itarchitecturepatterns.net/patterns/int-native-cloud
@@ -49,10 +49,80 @@ Staff keep their own calendars in Google Calendar or Microsoft 365. This integra
 - Volume: typical 2 notifications per staff member per hour; peak 30 per staff member per hour (Monday mornings).
 - Ordering: notifications are treated as "something changed", never as the change itself; the delta query returns the current state, so out-of-order notifications do no harm.
 
+## Interaction flows
+
+A calendar change reaching search, and the live check at confirmation that cannot always be made.
+
+```mermaid
+sequenceDiagram
+  accTitle: A calendar change reaches search
+  accDescr: A staff member changes their calendar and the provider notifies the sync service. The service asks the provider for the calendar's current state and replaces the stored busy times, so the next search no longer offers the overlapping times within 60 seconds. A subscription is renewed when less than a day remains. One that lapsed anyway raises an alert, is created again, and triggers a full re-synchronisation.
+
+  participant P as Calendar provider
+  participant K as Calendar sync service
+  participant S as Booking store
+
+  P->>K: change notification
+  K->>P: delta query for the current state
+  P-->>K: current busy times
+  K->>S: replace the busy times
+  opt less than a day of the subscription is left
+    K->>P: renew the subscription
+  end
+  opt the subscription lapsed
+    K->>K: alert, subscribe again, re-synchronise in full
+  end
+```
+
+```mermaid
+sequenceDiagram
+  accTitle: The live check at confirmation
+  accDescr: When a hold is confirmed, the booking service asks the sync service to check that one time against the staff member's own calendar. The provider answers free or busy, and a conflict refuses the booking. If the provider cannot be reached the answer is not checked, the booking goes ahead, the skipped check is logged, and the calendar is reconciled when the provider returns.
+
+  participant B as Booking service
+  participant K as Calendar sync service
+  participant P as Calendar provider
+
+  B->>K: live check of this one time
+  K->>P: is the time free?
+  alt the provider answers
+    P-->>K: free or busy
+    K-->>B: free, or conflict
+  else the provider cannot be reached
+    K-->>B: not checked (logged)
+  end
+```
+
+1. The provider sends a change notification; the sync service treats it as "something changed", asks for the current state and replaces the stored busy times.
+2. A subscription with less than a day left is renewed; one that has lapsed raises an alert, is created again, and the calendar is re-synchronised in full.
+3. At confirmation the booking service asks for a live check of the one time; a conflict refuses the booking, and an unreachable provider returns "not checked" and the booking goes ahead.
+
 ## Interface specification
 
 - other: each provider's calendar API and change-notification webhook — busy times, events written by the platform; authoritative copy: the provider's published documentation, pinned by link in the calendar-sync repository.
 - Design standard followed: delta queries driven by notifications, with a full re-synchronisation every 24 hours as the safety net.
+
+## Examples
+
+Captured from the running demo's stand-in provider and store. The real providers' payloads are in their documentation.
+
+A change notification, which says that something changed and nothing about what:
+
+```json
+{"subscriptionId": "sub_20", "staffId": "sam"}
+```
+
+What the sync service stores from the delta query, one busy interval (a row of `busy_times`; times are milliseconds since the epoch; `event_ref` points at the provider's event and holds no title, attendee or description):
+
+```json
+{"business_id": "example-clinic", "staff_id": "sam", "event_ref": "evt_1", "start_ms": 1790566200000, "end_ms": 1790568000000}
+```
+
+The main error, a subscription that lapsed before it was renewed (the sync service's log entry; its shape is in ICR-AB-0001, Observability):
+
+```json
+{"seq": 412, "at": 1790823600000, "component": "calendar", "event": "renewal_missed", "level": "alert", "ref": "ICR-AB-0002#open-issues", "traceId": null, "detail": {"businessId": "example-clinic", "staffId": "sam"}}
+```
 
 ## Data
 
@@ -77,6 +147,8 @@ Staff keep their own calendars in Google Calendar or Microsoft 365. This integra
 - Latency: a calendar change is reflected in availability within 60 seconds at p95, measured from the notification's arrival.
 - Throughput: within each provider's published per-user and per-application limits; beyond them the consumer backs off as the provider instructs.
 - Freshness: 60 seconds p95 for changes; 24 hours worst case, bounded by the full re-synchronisation.
+- How the consumer learns its limits: from each provider's published limits and its throttling responses, which it honours; the platform does not report usage to the providers.
+- Recovery for the integration: time 1 hour, point 5 minutes for the stored busy times (they are rebuilt from the provider by a full re-synchronisation).
 - Support hours for these objectives: 24×7 for the consumer; the providers' own support terms apply to them.
 
 ## Error handling
@@ -87,7 +159,7 @@ Staff keep their own calendars in Google Calendar or Microsoft 365. This integra
 - Idempotency: events written to calendars carry the booking id as an extended property; writing the same booking twice updates, never duplicates.
 - Failed messages or files: failures after retries go to the sync dead-letter queue, and the business administrator is emailed when a staff member's calendar has not synchronised for 1 hour.
 - Recovery after an outage: the consumer asks a failing provider once a minute, however long the retry backoff has grown; when it answers, a full re-synchronisation for the affected staff members runs and pending writes are retried at once, so nothing waits out the backoff.
-- The live check at confirmation: the consumer asks the provider about the one time being confirmed, with the same ten-second timeout. If the provider cannot answer, the answer is "not checked", not "free"; the booking proceeds, the skipped check is logged, and the booking's calendar event is written, and any conflict found, when the provider returns. This accepts a possible double booking; see ADR-AB-0003.
+- The live check at confirmation: the consumer asks the provider about the one time being confirmed, with the same ten-second timeout. If the provider cannot answer, the answer is "not checked", not "free"; the booking proceeds, the skipped check is logged, and the booking's calendar event is written when the provider returns. This accepts a possible double booking; see ADR-AB-0003. *Proposed:* after recovery the connector also compares the booking with the calendar and flags a conflict. The demo writes the event and does not yet detect conflicts.
 - Subscription renewal: a change subscription is renewed when less than a day of its life remains (the demo uses a three-day subscription). A subscription that lapses anyway raises an alert, is created again, and triggers a full re-synchronisation, because changes may have been missed.
 
 ## Change and versioning
@@ -95,13 +167,19 @@ Staff keep their own calendars in Google Calendar or Microsoft 365. This integra
 - Interface versioning: provider API versions are pinned in configuration and reviewed quarterly.
 - Breaking change means: a provider retiring an API version, a scope, or its change-notification mechanism.
 - Notice before a breaking change or deprecation: as published by each provider (typically 12 months); the platform tracks their deprecation notices.
+- What each consumer relies on: the sync service relies on the providers' change notifications and delta queries, on subscriptions of a known lifetime that can be renewed, and the narrow scopes granted; the platform tracks each provider's deprecation notices. The demo's tests against its stand-in provider exercise the notifications, the request for the current state that stands in for a delta query, and the renewal; the scopes are reviewed before any scope change (see Security).
 - Changing this ICR: the Booking platform team lead, with the security architect for any scope change.
+
+### Change log
+
+- 0.11.0 (2026-10-04, **proposed**): the examples, recovery targets, what the sync service relies on, how consumers learn limits, the alert on a skipped live check (planned), conflict detection after recovery (proposed).
+- 0.10.0 (2026-10-03): the subscription renewal schedule, the recovery probe and the live-check outcome when the provider is down.
 
 ## Observability
 
 - Correlation identifier: the staff member's connection id, plus the booking id for events written.
 - Logs: every notification, delta query and write, with connection id and outcome; never event titles or attendee details.
-- Metrics and alerts: age of the oldest unsynchronised change per business above 5 minutes alerts the Booking platform on-call; a connection failing for 1 hour emails the business administrator.
+- Metrics and alerts: age of the oldest unsynchronised change per business above 5 minutes alerts the Booking platform on-call; a connection failing for 1 hour emails the business administrator. A skipped live check is logged as a warning; an alert on it is planned (ADR-AB-0003, not yet built).
 
 ## Support and escalation
 
@@ -114,13 +192,14 @@ Severity levels and response targets: Sev 1 (sync stopped for all businesses) 15
 
 ## Acceptance criteria
 
-1. A new appointment added directly to a staff member's calendar removes the overlapping slots from search within 60 seconds.
-2. Confirming a booking creates exactly one event in the staff member's calendar, and confirming the same booking again creates no second event.
-3. Revoking a staff member's calendar access in the admin console deletes their stored tokens and stops synchronisation within 1 minute.
-4. With a provider unavailable for 1 hour, no change is lost: every calendar is consistent within 10 minutes of the provider returning.
-5. No stored busy interval contains an event title, attendee or description.
-6. A subscription with less than a day left is renewed; one that lapsed raises an alert, is recreated, and the calendar is re-synchronised.
-7. With the provider unavailable at confirmation the booking succeeds and the check is recorded as skipped; with it available the live check refuses a conflicting time.
+1. A new appointment added directly to a staff member's calendar removes the overlapping slots from search within 60 seconds. Proved by: the freshness test against the stand-in provider.
+2. Confirming a booking creates exactly one event in the staff member's calendar, and confirming the same booking again creates no second event. Proved by: the idempotent-write test.
+3. Revoking a staff member's calendar access in the admin console deletes their stored tokens and stops synchronisation within 1 minute. Proved by: the revocation test.
+4. With a provider unavailable for 1 hour, no change is lost: every calendar is consistent within 10 minutes of the provider returning. Proved by: the outage and recovery test.
+5. No stored busy interval contains an event title, attendee or description. Proved by: the stored-data scan.
+6. A subscription with less than a day left is renewed; one that lapsed raises an alert, is recreated, and the calendar is re-synchronised. Proved by: the renewal and lapse tests.
+7. With the provider unavailable at confirmation the booking succeeds and the check is recorded as skipped; with it available the live check refuses a conflicting time. Proved by: the live-check test.
+8. The notification and busy-interval examples in Examples match the shapes the sync service reads and stores. Proved by: not yet automated; checked in review until the shapes are defined in a schema and a step in CI validates them.
 
 ## Related records
 
@@ -130,4 +209,4 @@ Severity levels and response targets: Sev 1 (sync stopped for all businesses) 15
 
 ## Open issues
 
-- Microsoft 365 change-notification subscriptions for calendar events expire after a few days and must be renewed well before they lapse. A renewal schedule and an alert on a missed renewal are now designed (see Error handling) and shown working against a stand-in provider. This contract stays "proposed" until the platform lead agrees them and they are tried against a real provider, whose actual subscription lifetime and renewal limits may differ.
+- Owner: Lead back-end engineer. Due: 2026-10-31. Microsoft 365 change-notification subscriptions for calendar events expire after a few days and must be renewed well before they lapse. A renewal schedule and an alert on a missed renewal are now designed (see Error handling) and shown working against a stand-in provider. This contract stays "proposed" until the platform lead agrees them and they are tried against a real provider, whose actual subscription lifetime and renewal limits may differ.

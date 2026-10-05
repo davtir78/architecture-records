@@ -90,7 +90,33 @@ A worked example is on the template's page. -->
 
 ### 4.1 Logical Architecture Diagram
 
-{A diagram of channels, entry points, services, stores and external systems, and the flows between them. Text, Mermaid or an image are all fine; it must be readable without colour.}
+<!-- Draw diagrams as Mermaid text rather than pictures: a change shows up in review, the diagram renders on GitHub and on this site, and the source is the fallback for anyone who cannot see it. Give every diagram an accTitle and an accDescr, and make sure the tables around it say the same things. Keep the labels to the names used in 4.2. -->
+
+{A diagram of channels, entry points, services, stores and external systems, and the flows between them, in the form below. It must be readable without colour.}
+
+```mermaid
+flowchart TB
+  accTitle: {Title of the diagram}
+  accDescr: {One or two sentences saying what is in the diagram and how the parts connect, for a reader who cannot see it.}
+
+  subgraph Channels["{Channel or consumer boundary}"]
+    Consumer["{Consumer or channel}"]
+  end
+  subgraph System["{System boundary}"]
+    Entry["{Entry point, such as a gateway}"]
+    Service["{Service}"]
+    Store[("{Data store}")]
+  end
+  External["{External system}"]
+
+  Consumer -->|"{protocol}"| Entry
+  Entry --> Service
+  Service -->|"{what it reads or writes}"| Store
+  Service -->|"{what it sends or receives}"| External
+
+  classDef external stroke-dasharray: 6 4
+  class External external
+```
 
 ### 4.2 Component Catalog
 
@@ -100,7 +126,19 @@ A worked example is on the template's page. -->
 
 ### 4.3 System Context & External Neighbours
 
-{The system drawn as one box among the people and systems it deals with, so a reader sees its boundary before its insides. Text, Mermaid or an image are all fine.}
+{The system drawn as one box among the people and systems it deals with, so a reader sees its boundary before its insides.}
+
+```mermaid
+flowchart LR
+  accTitle: {Title of the diagram}
+  accDescr: {What is around the system, and what passes between them.}
+
+  User(["{User or role}"]) --> System["<b>{System name}</b>"]
+  System <-->|"{what passes in each direction}"| Provider["{External system}"]
+
+  classDef external stroke-dasharray: 6 4
+  class Provider external
+```
 
 | Neighbour | Kind | Exchange | Contract |
 | :--- | :--- | :--- | :--- |
@@ -115,6 +153,24 @@ A worked example is on the template's page. -->
 - **Trigger:** {what starts it}
 - **Normal path:** {numbered steps, naming the components from 4.2 in order}
 - **When {part} fails:** {what the system does, what the user sees, and what is repaired afterwards}
+
+{A sequence diagram of the scenario, with the normal path and the failure as alternatives. The steps above stay as the text version.}
+
+```mermaid
+sequenceDiagram
+  accTitle: {Scenario name}
+  accDescr: {The normal path and the failure case, in two or three sentences.}
+
+  participant A as {Component}
+  participant B as {Component}
+
+  A->>B: {request}
+  alt normal path
+    B-->>A: {response}
+  else a part fails
+    B-->>A: {what the caller is told}
+  end
+```
 
 ## 5. Integration & Interface Design
 

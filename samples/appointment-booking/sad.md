@@ -123,31 +123,51 @@ These are the decisions that shape the whole system: hard or costly to reverse, 
 
 ### 4.1 Logical Architecture Diagram
 
-```
- Customer's browser                 Booking platform                                  External providers
- ┌──────────────────────┐
- │ Business's web page  │
- │  ┌────────────────┐  │  HTTPS   ┌─────────────┐   ┌──────────────────────┐
- │  │ Booking widget │──┼─────────▶│ API gateway │──▶│ Availability service │◀── busy times ──┐
- │  │   (iframe)     │  │          └─────────────┘   │ Booking service      │                 │
- │  └────────────────┘  │                            └──────────┬───────────┘                 │
- └──────────────────────┘                                       │ booking + outbox           │
-                                                   ┌────────────▼───────────┐                  │
- Admin console ──────────────────────────────────▶ │     Booking store      │                  │
-                                                   └────────────┬───────────┘                  │
-                                                                │ outbox relay                 │
-                                                   ┌────────────▼───────────┐                  │
-                                                   │      Event stream      │                  │
-                                                   └──────┬──────────┬──────┘                  │
-                                                          │          │                         │
-                                          ┌───────────────▼──┐   ┌───▼──────────────────┐       │
-                                          │ Calendar         │◀─▶│ Google Calendar /    │───────┘
-                                          │ connectors       │   │ Microsoft 365        │
-                                          └──────────────────┘   └──────────────────────┘
-                                          ┌──────────────────┐   ┌──────────────────────┐
-                                          │ Notification     │──▶│ Email and SMS        │
-                                          │ worker           │   │ delivery provider    │
-                                          └──────────────────┘   └──────────────────────┘
+```mermaid
+flowchart TB
+  accTitle: Logical architecture of Appointment Booking
+  accDescr {
+    A customer's browser runs the booking widget in a frame inside the business's web page. The widget calls the API gateway over HTTPS, and so does the admin console. The gateway routes to the availability service and the booking service, which read and write the booking store. The booking service also asks the calendar connectors for a live check of one time when it confirms a booking. The store's outbox is relayed to an event stream, which feeds the calendar connectors and the notification worker. The connectors exchange busy times and booking events with Google Calendar or Microsoft 365, and the notification worker hands messages to an email and SMS provider.
+  }
+
+  subgraph Browser["Customer's browser"]
+    Page["Business's web page"]
+    Widget["Booking widget<br/>(iframe)"]
+    Page --- Widget
+  end
+  Admin["Admin console"]
+
+  subgraph Platform["Booking platform"]
+    GW["API gateway"]
+    Avail["Availability<br/>service"]
+    Book["Booking<br/>service"]
+    Store[("Booking store")]
+    Stream[["Event stream"]]
+    Conn["Calendar<br/>connectors"]
+    Notif["Notification<br/>worker"]
+  end
+
+  subgraph External["External providers"]
+    Cal["Google Calendar /<br/>Microsoft 365"]
+    Msg["Email and SMS<br/>provider"]
+  end
+
+  Widget -->|HTTPS| GW
+  Admin -->|HTTPS| GW
+  GW --> Avail
+  GW --> Book
+  Avail -->|reads| Store
+  Book -->|booking + outbox,<br/>one transaction| Store
+  Book -->|live check at<br/>confirmation| Conn
+  Store -->|outbox relay| Stream
+  Stream --> Conn
+  Stream --> Notif
+  Conn -->|busy times| Store
+  Conn <-->|change notifications,<br/>booking events| Cal
+  Notif -->|messages| Msg
+
+  classDef external stroke-dasharray: 6 4
+  class Cal,Msg external
 ```
 
 ### 4.2 Component Catalog
@@ -166,14 +186,25 @@ These are the decisions that shape the whole system: hard or costly to reverse, 
 
 ### 4.3 System Context & External Neighbours
 
-```
-  Customer ──(browser)──▶ Business's website ─── loads ───┐
-                                                          ▼
-  Business administrator ──────────────────────▶ ┌────────────────────┐ ◀─ change notifications ─ Google Calendar /
-  Staff member ───(connects their calendar)────▶ │  Booking platform  │ ── booking events ──────▶ Microsoft 365
-                                                 │   (this system)    │
-  Identity provider ◀───(admin sign-in)───────── │                    │ ── messages ────────────▶ Email and SMS provider
-                                                 └────────────────────┘ ◀─ delivery status ────── (delivery provider)
+```mermaid
+flowchart LR
+  accTitle: System context of Appointment Booking
+  accDescr {
+    The booking platform sits among a customer, who books through the business's website; a business administrator; a staff member, who connects their calendar; Google Calendar or Microsoft 365, which exchange change notifications and booking events with it; an email and SMS provider, which receives messages and reports delivery status; and an identity provider, which signs administrators in.
+  }
+
+  Customer(["Customer"]) --> Site["Business's website"]
+  Site -->|loads the widget| Platform
+  Admin(["Business<br/>administrator"]) --> Platform
+  Staff(["Staff member"]) -->|connects calendar,<br/>OAuth consent| Platform
+  Platform["<b>Booking platform</b><br/>(this system)"]
+  Platform <-->|change notifications,<br/>booking events| Cal["Google Calendar /<br/>Microsoft 365"]
+  Platform -->|messages| Msg["Email and SMS provider"]
+  Msg -->|delivery status| Platform
+  Platform -->|administrator sign-in| IdP["Identity provider"]
+
+  classDef external stroke-dasharray: 6 4
+  class Site,Cal,Msg,IdP external
 ```
 
 | Neighbour | Kind | Exchange | Contract |
@@ -205,6 +236,43 @@ The three scenarios below are the ones the design most depends on. Each runs in 
 - **When the calendar provider is unavailable at step 5:** the check cannot be made, so the booking is confirmed anyway, the skipped check is logged, and the calendar is reconciled when the provider returns. A double booking against an event the platform had not seen is possible; it is accepted deliberately ([ADR-AB-0003](decisions/0003-availability-source-of-truth.md)).
 - **When the customer is slow:** the hold can be extended up to ten times, and the customer can let it go by going back. An expired hold frees the time.
 
+```mermaid
+sequenceDiagram
+  accTitle: Confirming a booking
+  accDescr {
+    The widget sends a confirmation with an idempotency key. The booking service asks the calendar connector to check that one time against the staff member's own calendar. If the provider answers, the booking proceeds or is refused; if it cannot be reached the check is recorded as skipped and the booking proceeds. The booking and its outbox rows are written in one transaction and the widget is told it is confirmed. The outbox is relayed to the calendar connector, which writes the event once, and to the notification worker, which sends the confirmation once.
+  }
+
+  participant W as Booking widget
+  participant G as API gateway
+  participant B as Booking service
+  participant S as Booking store
+  participant K as Calendar connector
+  participant P as Calendar provider
+  participant N as Notification worker
+
+  W->>G: POST confirm (Idempotency-Key)
+  G->>B: confirm the hold
+  B->>K: live check of this one time
+  K->>P: is the time still free?
+  alt provider answers
+    P-->>K: free or busy
+    K-->>B: free, or conflict
+  else provider unavailable
+    K-->>B: not checked (logged)
+  end
+  alt conflict
+    B-->>W: 409, with the next free times
+  else free, or not checked
+    B->>S: booking and outbox rows, one transaction
+    B-->>W: confirmed
+    S-->>K: BookingConfirmed (outbox relay)
+    K->>P: write the event, once
+    S-->>N: BookingConfirmed (outbox relay)
+    N->>N: send the confirmation, once
+  end
+```
+
 #### A staff member's calendar changes
 
 - **Trigger:** a staff member adds, moves or removes an appointment in their own calendar.
@@ -215,11 +283,73 @@ The three scenarios below are the ones the design most depends on. Each runs in 
 - **When a notification is lost, or the subscription has lapsed:** the connector renews each subscription when less than a day of it remains. A subscription that lapses anyway raises an alert, is created again, and the calendar is re-synchronised in full. A full re-synchronisation also runs every 24 hours as the safety net.
 - **When the provider is unreachable:** the connector retries with growing delays, and asks the provider once a minute whether it is back. When it answers, the calendar is re-synchronised and pending writes retried at once, so no one waits out a long delay.
 
+```mermaid
+sequenceDiagram
+  accTitle: A staff calendar changes
+  accDescr {
+    A staff member changes their calendar. The provider notifies the connector, which asks the provider for the calendar's current state and replaces the stored busy times. The next search no longer offers the overlapping times. If the provider cannot be reached the connector retries with growing delays, asks once a minute whether it is back, and re-synchronises in full when it answers. A subscription is renewed when less than a day remains; if one lapses, the connector raises an alert, subscribes again and re-synchronises in full.
+  }
+
+  actor U as Staff member
+  participant P as Calendar provider
+  participant K as Calendar connector
+  participant S as Booking store
+
+  U->>P: add an appointment
+  P->>K: change notification
+  K->>P: delta query for the current state
+  alt the provider answers
+    P-->>K: current busy times
+    K->>S: replace the busy times
+    Note over K,S: the next search no longer offers the overlapping times, within 60 seconds
+  else the provider cannot be reached
+    K->>K: retry with growing delays, and ask once a minute whether it is back
+    K->>S: re-synchronise in full when it answers
+  end
+  opt less than a day of the subscription is left
+    K->>P: renew the subscription
+  end
+  opt the subscription lapsed anyway
+    K->>K: alert, subscribe again, re-synchronise in full
+  end
+```
+
 #### A booking changes while the messaging provider is down
 
 - **Trigger:** a customer cancels, or reschedules, a booking.
 - **Normal path:** the change and its events are committed together; the relay publishes them; the notification worker sends a message for each, keyed by event and channel so a repeat sends nothing.
 - **When the messaging provider is down:** the booking change still succeeds. Messages wait in the queue and are retried; each is given up on only 24 hours after it was due. When the provider returns, the queue drains, a cancellation replaces any confirmation not yet sent, and a reminder whose time has passed is dropped rather than sent late.
+
+```mermaid
+sequenceDiagram
+  accTitle: A booking changes while the messaging provider is down
+  accDescr {
+    A customer cancels a booking. The change and its events are committed together and relayed to the notification worker. While the messaging provider is down the worker retries with growing delays for up to 24 hours from when the message was due, and then dead-letters the message and raises an alert. If the provider returns in time the queue drains, a cancellation replaces any confirmation not yet sent, and a reminder whose time has passed is dropped.
+  }
+
+  participant B as Booking service
+  participant S as Booking store
+  participant N as Notification worker
+  participant M as Messaging provider
+
+  B->>S: cancel, with its events (one transaction)
+  S-->>N: BookingCancelled (outbox relay)
+  N->>M: send the cancellation
+  alt the provider accepts
+    M-->>N: accepted
+  else the provider is down
+    M--xN: unavailable
+    loop retry with growing delays, up to 24 hours from due
+      N->>M: send again
+    end
+    alt the provider returns in time
+      M-->>N: accepted when it returns
+      Note over N,M: an unsent confirmation is replaced by the cancellation, and a reminder whose time has passed is dropped
+    else still failing 24 hours after it was due
+      N->>N: dead-letter the message and alert
+    end
+  end
+```
 
 ### 4.5 Alignment with the Reference Architectures
 
@@ -255,9 +385,9 @@ A reference architecture belongs to a domain, not to one system, so this system 
 
 | Contract | Interaction | Status |
 | :--- | :--- | :--- |
-| [ICR-AB-0001 Booking API](contracts/ICR-AB-0001-booking-api.md) | Synchronous request/response; OpenAPI | Agreed; extending and releasing a hold proposed |
+| [ICR-AB-0001 Booking API](contracts/ICR-AB-0001-booking-api.md) | Synchronous request/response; OpenAPI | Agreed at 1.1.0 (1.2.0 proposed); extending and releasing a hold proposed |
 | [ICR-AB-0002 Calendar synchronisation](contracts/ICR-AB-0002-calendar-sync.md) | Change notifications and delta queries | Proposed — renewal schedule designed and shown working, to be agreed and tried against a real provider |
-| [ICR-AB-0003 Notification delivery](contracts/ICR-AB-0003-notifications.md) | Asynchronous messages; AsyncAPI and CloudEvents | Agreed |
+| [ICR-AB-0003 Notification delivery](contracts/ICR-AB-0003-notifications.md) | Asynchronous messages; AsyncAPI and CloudEvents | Agreed at 1.0.1 (1.1.0 proposed) |
 
 ## 6. Data Architecture
 
@@ -334,7 +464,7 @@ A reference architecture belongs to a domain, not to one system, so this system 
 | :--- | :--- | :--- |
 | Recovery point objective | 5 minutes | Point-in-time database recovery; events retained on the stream for 7 days |
 | Recovery time objective | 1 hour | Infrastructure as code redeploys to a second region from backups ([ADR-AB-0006](decisions/0006-hosting-and-recovery.md)) |
-| Provider outage (calendar) | No booking impact | Search from the synchronised copy; confirmation proceeds without the live check, the skip is logged and alerted, and the calendar is reconciled when the provider returns; a possible double booking is an accepted risk ([ADR-AB-0003](decisions/0003-availability-source-of-truth.md)) |
+| Provider outage (calendar) | No booking impact | Search from the synchronised copy; confirmation proceeds without the live check, the skip is logged (an alert on it is planned), and the calendar is reconciled when the provider returns; a possible double booking is an accepted risk ([ADR-AB-0003](decisions/0003-availability-source-of-truth.md)) |
 | Provider outage (messaging) | No booking impact | Messages queue for up to 24 hours ([notification requirements](requirements/notifications.md)) |
 | Recovery test | Twice a year | Restore to the second region and run the booking acceptance tests |
 
@@ -342,7 +472,7 @@ A reference architecture belongs to a domain, not to one system, so this system 
 
 | Concern | How the design handles it |
 | :--- | :--- |
-| Observability | Every request carries a W3C `traceparent`, created by the widget and returned in each response, so a booking can be followed from the browser to the calendar and the message. Logs are structured, carry the business id, and never hold a customer's name, email or phone number, or a calendar event's title or attendees; the logger refuses such a field. Alerts: error rate and latency on the API; age of the oldest unsynchronised calendar change; oldest unsent message; a skipped live check; a missed subscription renewal ([ICR-AB-0001](contracts/ICR-AB-0001-booking-api.md), [ICR-AB-0002](contracts/ICR-AB-0002-calendar-sync.md), [ICR-AB-0003](contracts/ICR-AB-0003-notifications.md)) |
+| Observability | Every request carries a W3C `traceparent`, created by the widget and returned in each response, so a booking can be followed from the browser to the calendar and the message. Logs are structured, carry the business id, and never hold a customer's name, email or phone number, or a calendar event's title or attendees; the logger refuses such a field. Alerts: error rate and latency on the API; age of the oldest unsynchronised calendar change; oldest unsent message; a skipped live check (planned, ADR-AB-0003); a missed subscription renewal ([ICR-AB-0001](contracts/ICR-AB-0001-booking-api.md), [ICR-AB-0002](contracts/ICR-AB-0002-calendar-sync.md), [ICR-AB-0003](contracts/ICR-AB-0003-notifications.md)) |
 | Error handling and retries | Errors reach callers as RFC 9457 problem documents with the codes each contract lists. Only safe requests, or ones with an idempotency key, are retried, at most twice with jitter; a conflict is never retried. Calls to providers back off exponentially, and a failing provider is probed once a minute so recovery is not delayed. Messages are retried for 24 hours from when they were due, then dead-lettered and shown to the business |
 | Time and time zones | Every booking is one UTC instant; working hours are kept in the business's own zone and follow its clock changes; every time on the wire is ISO 8601 with an offset ([availability requirements](requirements/availability.md)) |
 | Accessibility | The widget and admin console meet WCAG 2.2 AA: real form controls, a single Tab stop for the day-and-time grid with arrow-key movement, errors tied to their fields, announcements for changes, and a hold the customer can extend. Checked on every build with an automated rules engine and a keyboard-only booking, change and cancellation; a check with a real screen reader is still to be done before launch (section 10) |
@@ -352,7 +482,7 @@ A reference architecture belongs to a domain, not to one system, so this system 
 
 | Item | Kind | Likelihood and impact | Treatment | Owner |
 | :--- | :--- | :--- | :--- | :--- |
-| A double booking made while the calendar provider is down | Risk | Low likelihood, a lost appointment for one customer when it happens | Accept; the skipped check is alerted, so the business can look; the product owner records acceptance ([ADR-AB-0003](decisions/0003-availability-source-of-truth.md)) | Product owner |
+| A double booking made while the calendar provider is down | Risk | Low likelihood, a lost appointment for one customer when it happens | Accept; the skipped check is logged and an alert on it is planned, so the business can look; the product owner records acceptance ([ADR-AB-0003](decisions/0003-availability-source-of-truth.md)) | Product owner |
 | A change subscription lapses and updates silently stop | Risk | Medium likelihood, stale availability for one staff member | Mitigate: renew a day ahead, alert on a lapse, daily full re-synchronisation ([ICR-AB-0002](contracts/ICR-AB-0002-calendar-sync.md)) | Lead back-end engineer |
 | Loss of the whole region | Risk | Very low likelihood, about an hour's outage and five minutes of lost bookings | Accept; the product owner records acceptance; recovery rehearsed twice a year ([ADR-AB-0006](decisions/0006-hosting-and-recovery.md)) | Product owner |
 | A provider retires an API version or a scope | Risk | Medium likelihood over the life of the product, a connector stops working | Mitigate: pin versions, review their notices quarterly | Lead back-end engineer |
