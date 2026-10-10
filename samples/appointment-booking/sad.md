@@ -3,9 +3,9 @@ template: solution-architecture-design
 system: Appointment Booking (sample)
 project: Appointment Booking
 lead-architect: Solution architect
-version: "1.3"
+version: "1.4"
 status: approved
-last-updated: 2026-10-03
+last-updated: 2026-10-09
 ---
 
 # Solution Architecture Design (SAD): Appointment Booking (sample)
@@ -21,6 +21,7 @@ last-updated: 2026-10-03
 | 1.1 | 2026-10-02 | Solution architect | Decisions re-cut: API exposure, calendar integration and the data store recorded (ADR-AB-0002, 0004, 0007); the double-booking rule and time handling moved out of the decisions into the requirements, which are now specified with scenarios |
 | 1.2 | 2026-10-02 | Solution architect | Only major decisions kept as ADRs: notification delivery is a design note; hosting, compute and recovery (the run cost and the recovery risk) recorded as ADR-AB-0006; calendar integration reframed as build versus buy |
 | 1.3 | 2026-10-03 | Solution architect | Stakeholders and concerns, ranked quality goals, constraints, system context, runtime view, cross-cutting concerns, risks and glossary added; the calendar-outage behaviour settled as confirm-and-reconcile (ADR-AB-0003); hold extension and release, and the subscription renewal schedule, brought into the contracts after the working demo found them missing |
+| 1.4 | 2026-10-09 | Solution architect | Interface contract status table (section 5.2) refreshed: ICR-AB-0001 agreed at 1.2.0 and ICR-AB-0003 at 1.1.0 (agreed by the team leads, 2026-10-09), ICR-AB-0002 still proposed; hold extension and release marked proposed where they are mentioned; the Testing row and section 10 name the criteria not yet proved (the load test, the OpenAPI file, the AsyncAPI file, the calendar-sync schema) |
 
 ### Approvals
 
@@ -234,7 +235,7 @@ The three scenarios below are the ones the design most depends on. Each runs in 
   7. The calendar connector writes the booking into the staff member's calendar, once; the notification worker sends the confirmation, once.
 - **When two customers choose the same time:** the database refuses the second hold, or the second confirmation. That customer is told the time is taken and is offered the next free times at once. No messages are queued for a booking that did not happen.
 - **When the calendar provider is unavailable at step 5:** the check cannot be made, so the booking is confirmed anyway, the skipped check is logged, and the calendar is reconciled when the provider returns. A double booking against an event the platform had not seen is possible; it is accepted deliberately ([ADR-AB-0003](decisions/0003-availability-source-of-truth.md)).
-- **When the customer is slow:** the hold can be extended up to ten times, and the customer can let it go by going back. An expired hold frees the time.
+- **When the customer is slow:** the hold can be extended up to ten times (proposed), and the customer can let it go by going back (proposed). An expired hold frees the time.
 
 ```mermaid
 sequenceDiagram
@@ -385,9 +386,9 @@ A reference architecture belongs to a domain, not to one system, so this system 
 
 | Contract | Interaction | Status |
 | :--- | :--- | :--- |
-| [ICR-AB-0001 Booking API](contracts/ICR-AB-0001-booking-api.md) | Synchronous request/response; OpenAPI | Agreed at 1.1.0 (1.2.0 proposed); extending and releasing a hold proposed |
-| [ICR-AB-0002 Calendar synchronisation](contracts/ICR-AB-0002-calendar-sync.md) | Change notifications and delta queries | Proposed — renewal schedule designed and shown working, to be agreed and tried against a real provider |
-| [ICR-AB-0003 Notification delivery](contracts/ICR-AB-0003-notifications.md) | Asynchronous messages; AsyncAPI and CloudEvents | Agreed at 1.0.1 (1.1.0 proposed) |
+| [ICR-AB-0001 Booking API](contracts/ICR-AB-0001-booking-api.md) | Synchronous request/response; OpenAPI | Agreed at 1.2.0 (2026-10-09); extending and releasing a hold remain proposed |
+| [ICR-AB-0002 Calendar synchronisation](contracts/ICR-AB-0002-calendar-sync.md) | Change notifications and delta queries | Proposed at 0.11.0 — renewal schedule designed and shown working; it stays proposed until the platform lead agrees the renewal schedule and alert and they are tried against a real provider (open issue, due 2026-10-31) |
+| [ICR-AB-0003 Notification delivery](contracts/ICR-AB-0003-notifications.md) | Asynchronous messages; AsyncAPI and CloudEvents | Agreed at 1.1.0 (2026-10-09) |
 
 ## 6. Data Architecture
 
@@ -475,8 +476,8 @@ A reference architecture belongs to a domain, not to one system, so this system 
 | Observability | Every request carries a W3C `traceparent`, created by the widget and returned in each response, so a booking can be followed from the browser to the calendar and the message. Logs are structured, carry the business id, and never hold a customer's name, email or phone number, or a calendar event's title or attendees; the logger refuses such a field. Alerts: error rate and latency on the API; age of the oldest unsynchronised calendar change; oldest unsent message; a skipped live check (planned, ADR-AB-0003); a missed subscription renewal ([ICR-AB-0001](contracts/ICR-AB-0001-booking-api.md), [ICR-AB-0002](contracts/ICR-AB-0002-calendar-sync.md), [ICR-AB-0003](contracts/ICR-AB-0003-notifications.md)) |
 | Error handling and retries | Errors reach callers as RFC 9457 problem documents with the codes each contract lists. Only safe requests, or ones with an idempotency key, are retried, at most twice with jitter; a conflict is never retried. Calls to providers back off exponentially, and a failing provider is probed once a minute so recovery is not delayed. Messages are retried for 24 hours from when they were due, then dead-lettered and shown to the business |
 | Time and time zones | Every booking is one UTC instant; working hours are kept in the business's own zone and follow its clock changes; every time on the wire is ISO 8601 with an offset ([availability requirements](requirements/availability.md)) |
-| Accessibility | The widget and admin console meet WCAG 2.2 AA: real form controls, a single Tab stop for the day-and-time grid with arrow-key movement, errors tied to their fields, announcements for changes, and a hold the customer can extend. Checked on every build with an automated rules engine and a keyboard-only booking, change and cancellation; a check with a real screen reader is still to be done before launch (section 10) |
-| Testing | Each requirement scenario and each contract acceptance criterion has an automated test; the database's refusal of overlaps and the isolation between businesses are tested directly, on every build, including by going round the application; a fifty-way race on one time must give exactly one booking. Load against the latency targets has not yet been measured (section 10) |
+| Accessibility | The widget and admin console meet WCAG 2.2 AA: real form controls, a single Tab stop for the day-and-time grid with arrow-key movement, errors tied to their fields, announcements for changes, and a hold the customer can extend (proposed). Checked on every build with an automated rules engine and a keyboard-only booking, change and cancellation; a check with a real screen reader is still to be done before launch (section 10) |
+| Testing | Each requirement scenario and each contract acceptance criterion has an automated test, except ICR-AB-0001 criteria 1 (load) and 9, ICR-AB-0003 criterion 6 and ICR-AB-0002 criterion 8 (no schema yet; that contract is proposed), which wait for the load test, the OpenAPI and AsyncAPI files and the calendar-sync schema (section 10); the database's refusal of overlaps and the isolation between businesses are tested directly, on every build, including by going round the application; a fifty-way race on one time must give exactly one booking. Load against the latency targets has not yet been measured (section 10) |
 
 ## 10. Risks, Assumptions & Technical Debt
 
@@ -490,7 +491,8 @@ A reference architecture belongs to a domain, not to one system, so this system 
 | Staff calendars are all Google Calendar or Microsoft 365 | Assumption | If wrong, a third connector is needed and the build-versus-buy case is reopened ([ADR-AB-0004](decisions/0004-calendar-integration.md)) | Confirm with the first ten businesses | Product owner |
 | New Zealand businesses can be served from Australian storage | Assumption | If wrong, a second region and a data-residency decision are needed | Confirm with the privacy officer before launch | Security architect |
 | Bot protection on holds and confirmations is specified but not built | Technical debt | The rate limit is the only defence until it is | Build before public launch | Booking platform team |
-| Load against the latency targets has not been measured | Technical debt | The targets are unproven at 200 requests a second | Load test before launch | Platform engineer |
+| Load against the latency targets has not been measured | Technical debt | The targets are unproven at 200 requests a second | Load test, due 2026-10-31 (ICR-AB-0001 criterion 1) | Lead back-end engineer |
+| The OpenAPI and AsyncAPI files and the calendar-sync schema do not exist yet | Technical debt | Criteria that check the contracts' examples against them (ICR-AB-0001 criterion 9, ICR-AB-0003 criterion 6, ICR-AB-0002 criterion 8) are checked in review only | Write the files and the schema and validate the examples in CI, due 2026-10-31 | Lead back-end engineer |
 | Screen-reader testing of the widget and console has not been done | Technical debt | Automated tools find only part of the problems | Test with NVDA and VoiceOver before launch | Booking front-end team |
 
 ## 11. Glossary

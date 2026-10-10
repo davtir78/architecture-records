@@ -2,9 +2,9 @@
 icr: "0.2"
 id: ICR-AB-0003
 title: Notification delivery
-status: proposed
+status: agreed
 version: 1.1.0
-date: 2026-10-04
+date: 2026-10-09
 pattern:
   id: int-middleware-cloud
   url: https://www.itarchitecturepatterns.net/patterns/int-middleware-cloud
@@ -171,8 +171,8 @@ The main error, a message given up on 24 hours after it was due (the worker's lo
 
 ### Change log
 
-- 1.1.0 (2026-10-04, **proposed**; the last agreed version is 1.0.1): the examples (a real envelope, with ISO 8601 times), recovery targets, what the worker relies on, the manage token noted as crossing to the provider, the reminder window stated as in the requirements, a field's type or format change counted as breaking.
-- 1.0.1 (2026-10-03): the 24-hour retry limit counts from when a message is due.
+- 1.1.0 (2026-10-09, agreed by the Booking platform team lead; drafted 2026-10-04): the agreement accepts criterion 6 as not yet proved: the AsyncAPI file is still to be built (owner: Lead back-end engineer; due 2026-10-31). Changes in this version: the examples (a real envelope, with ISO 8601 times), recovery targets, what the worker relies on, the manage token noted as crossing to the provider, the reminder window stated as in the requirements, a field's type or format change counted as breaking.
+- 1.0.1 (2026-10-03, agreed): the 24-hour retry limit counts from when a message is due.
 - 1.0.0 (2026-09-26): the first agreed version.
 
 ## Observability

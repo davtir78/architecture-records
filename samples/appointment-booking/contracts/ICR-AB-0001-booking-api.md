@@ -2,9 +2,9 @@
 icr: "0.2"
 id: ICR-AB-0001
 title: Booking API
-status: proposed
+status: agreed
 version: 1.2.0
-date: 2026-10-04
+date: 2026-10-09
 pattern:
   id: int-api-external
   url: https://www.itarchitecturepatterns.net/patterns/int-api-external
@@ -30,6 +30,7 @@ decisions:
   - ADR-AB-0003
   - ADR-AB-0005
   - ADR-AB-0006
+  - ADR-AB-0007
 ---
 
 # Booking API
@@ -59,7 +60,7 @@ Finding a time, holding it and confirming it, with the ways a request can be tur
 ```mermaid
 sequenceDiagram
   accTitle: Holding and confirming a time through the Booking API
-  accDescr: The widget searches for free times through the gateway, which checks the widget key, the registered origin and the rate limit, and refuses with 403 or 429. The customer picks a time and the widget holds it for five minutes through the gateway, which passes it to the services. If the time has gone the answer is 409 slot_taken with the next free times. Otherwise the hold is created, and the widget may extend it. The widget then confirms with the customer's details and an idempotency key. An expired hold is 410, a time that has gone or a hold already confirmed is 409 with the next free times, and otherwise the booking is created and returned with its manage token.
+  accDescr: The widget searches for free times through the gateway, which checks the widget key, the registered origin and the rate limit, and refuses with 403 or 429. The customer picks a time and the widget holds it for five minutes through the gateway, which passes it to the services. If the time has gone the answer is 409 slot_taken with the next free times. Otherwise the hold is created, and the widget may extend it (proposed). The widget then confirms with the customer's details and an idempotency key. An expired hold is 410, a time that has gone or a hold already confirmed is 409 with the next free times, and otherwise the booking is created and returned with its manage token.
 
   participant W as Booking widget
   participant G as API gateway
@@ -214,7 +215,7 @@ The `type` URL identifies the kind of problem and is not yet served as a page (R
   - `401` `unknown_key` (unknown or revoked key);
   - `403` `origin_not_registered`, `token_expired`, `forbidden`;
   - `404` `unknown_business`, `unknown_service`, `unknown_hold`, `unknown_booking`, `unknown_route`, `not_found`;
-  - `409` `slot_taken` (the time has gone, or the hold is already confirmed) and `calendar_conflict` (the staff member's own calendar has an event there), both listing the next free times; `too_many_extensions` and `already_confirmed`, which list none;
+  - `409` `slot_taken` (the time has gone, or the hold is already confirmed) and `calendar_conflict` (the staff member's own calendar has an event there), both listing the next free times; `too_many_extensions` (proposed, with extending a hold) and `already_confirmed`, which list none;
   - `410` `hold_expired`;
   - `413` `payload_too_large`, `415` `unsupported_media_type`;
   - `422` `idempotency_key_reused`, `not_bookable`, `invalid_request`;
@@ -225,7 +226,7 @@ The `type` URL identifies the kind of problem and is not yet served as a page (R
 - Idempotency: `POST` requests carry an `Idempotency-Key` header; the provider returns the original result for a repeated key within 24 hours, and answers `422 idempotency_key_reused` if the key is reused for a different request. Confirming a hold that is already confirmed, with a new key, is a `409` listing alternatives, not a second booking.
 - Failed messages or files: not applicable; the interaction is synchronous.
 - Recovery after an outage: holds that expired during the outage are released; the widget re-runs the customer's last search.
-- Holds: a hold lasts five minutes, and the customer can extend it up to ten times (WCAG 2.2.1 requires a way to extend a time limit) or release it by going back, so they do not block their own first choice.
+- Holds: a hold lasts five minutes, and the customer can extend it up to ten times (proposed; WCAG 2.2.1 requires a way to extend a time limit) or release it by going back (proposed), so they do not block their own first choice.
 
 ## Change and versioning
 
@@ -237,8 +238,8 @@ The `type` URL identifies the kind of problem and is not yet served as a page (R
 
 ### Change log
 
-- 1.2.0 (2026-10-04, **proposed**, not yet agreed by both leads; the last agreed version is 1.1.0): the error `code` values listed; the embedding origin header named; what the widget relies on; recovery targets; the examples and the criterion that checks them; acceptance criteria 7 and 8 (the skipped live check, hold extension) were added in 1.1.0.
-- 1.1.0 (2026-10-03): extend and release a hold (proposed); the `409` and `422` cases; the live check that cannot be made.
+- 1.2.0 (2026-10-09, agreed by the Booking platform and Booking front-end team leads; drafted 2026-10-04): agreed except the items marked proposed, which are extending and releasing a hold (with the `too_many_extensions` code and acceptance criterion 8); the alert on a skipped live check is planned, not built. The agreement accepts criteria 1 and 9 as not yet proved: the load test and the OpenAPI file are still to be built (owner: Lead back-end engineer; due 2026-10-31). Changes in this version: the error `code` values listed; the embedding origin header named; what the widget relies on; recovery targets; the examples and the criterion that checks them; the decisions list now includes ADR-AB-0007 (cited in Related records).
+- 1.1.0 (2026-10-03, agreed): extend and release a hold (proposed); acceptance criteria 7 and 8 (the skipped live check, hold extension); the `409` and `422` cases; the live check that cannot be made.
 - 1.0.0 (2026-09-26): the first agreed version.
 
 ## Observability
@@ -266,7 +267,7 @@ Severity levels and response targets: Sev 1 (no bookings possible) 15 minutes; S
 5. Every time in every response is an ISO 8601 instant with an offset. Proved by: the time-format test over every response shape.
 6. No log line contains a customer's name, email address or phone number. Proved by: the log scan in `api.test.mjs`. The logger also refuses such a field outright, but no test yet exercises that refusal.
 7. With the calendar provider unavailable, a confirmation succeeds, the response is the same as when the check passes, and the skipped check appears in the log. Proved by: the provider-outage test.
-8. Extending a hold adds five minutes, an eleventh extension is refused, and releasing a hold frees its time at once. Proved by: the hold-extension test.
+8. Proposed, with extending and releasing a hold: extending a hold adds five minutes, an eleventh extension is refused, and releasing a hold frees its time at once. Proved by: the hold-extension test.
 9. Every request and response shown in Examples is valid against `booking-api/openapi.yaml`. Proved by: not yet automated. It is checked in review until `booking-api/openapi.yaml` exists and a validation step runs in CI.
 
 ## Related records
